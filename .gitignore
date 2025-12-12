@@ -1,0 +1,35 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build and coverage
+coverage
+build
+dist
+.tmp
+.temp
+.cache
+
+# Tools
+.eslintcache
+
+# OS
+.DS_Store
+
+# Archives
+*.tgz
