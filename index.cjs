@@ -226,4 +226,212 @@ class NetCacheServer {
   }
 }
 
-module.exports = { NetCacheServer };
+class NetCacheClient {
+  /**
+   * @param {object} options
+   * @param {string} [options.host='127.0.0.1'] - Server host
+   * @param {number} [options.port=11211] - Server port
+   * @param {number} [options.reconnectDelayMs=1000] - Delay before reconnect attempt
+   */
+  constructor(options = {}) {
+    this.host = options.host ?? '127.0.0.1';
+    this.port = options.port ?? 11211;
+    this.reconnectDelayMs = options.reconnectDelayMs ?? 1000;
+
+    /** @type {net.Socket | null} */
+    this.socket = null;
+    this.connected = false;
+    this.shouldReconnect = true;
+
+    /** @type {bigint} */
+    this.nextId = 0n;
+
+    /** @type {Map<string, { resolve: Function, reject: Function }>} */
+    this.pending = new Map();
+
+    /** @type {Buffer} */
+    this.buffer = Buffer.alloc(0);
+  }
+
+  /**
+   * Connect to the server
+   * @returns {Promise<void>}
+   */
+  connect() {
+    return new Promise((resolve, reject) => {
+      this.shouldReconnect = true;
+      this.#doConnect(resolve, reject);
+    });
+  }
+
+  /**
+   * Internal connect logic
+   * @param {Function} [resolveInitial]
+   * @param {Function} [rejectInitial]
+   */
+  #doConnect(resolveInitial, rejectInitial) {
+    this.socket = new net.Socket();
+
+    this.socket.connect(this.port, this.host, () => {
+      this.connected = true;
+      if (resolveInitial) {
+        resolveInitial();
+      }
+    });
+
+    this.socket.on('data', (chunk) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      this.#processBuffer();
+    });
+
+    this.socket.on('error', (err) => {
+      if (rejectInitial) {
+        rejectInitial(err);
+        rejectInitial = null;
+        resolveInitial = null;
+      }
+      // Reject all pending requests
+      for (const [, pending] of this.pending) {
+        pending.reject(new Error(`Connection error: ${err.message}`));
+      }
+      this.pending.clear();
+    });
+
+    this.socket.on('close', () => {
+      this.connected = false;
+      // Reject all pending requests
+      for (const [, pending] of this.pending) {
+        pending.reject(new Error('Connection closed'));
+      }
+      this.pending.clear();
+
+      if (this.shouldReconnect) {
+        setTimeout(() => {
+          if (this.shouldReconnect) {
+            this.#doConnect();
+          }
+        }, this.reconnectDelayMs);
+      }
+    });
+  }
+
+  /**
+   * Disconnect from the server
+   */
+  disconnect() {
+    this.shouldReconnect = false;
+    if (this.socket) {
+      this.socket.destroy();
+      this.socket = null;
+    }
+    this.connected = false;
+  }
+
+  /**
+   * Process incoming response buffer
+   */
+  #processBuffer() {
+    const HEADER_SIZE = 13; // 8 id + 1 status + 4 payload length
+
+    while (this.buffer.length >= HEADER_SIZE) {
+      const payloadLen = this.buffer.readUInt32BE(9);
+      const totalLen = HEADER_SIZE + payloadLen;
+
+      if (this.buffer.length < totalLen) {
+        break;
+      }
+
+      const msgId = this.buffer.subarray(0, 8);
+      const status = this.buffer[8];
+      const payload = this.buffer.subarray(HEADER_SIZE, totalLen);
+
+      this.buffer = this.buffer.subarray(totalLen);
+
+      const idKey = msgId.toString('hex');
+      const pending = this.pending.get(idKey);
+      if (pending) {
+        this.pending.delete(idKey);
+        if (status === RES_OK) {
+          pending.resolve(payload);
+        } else {
+          pending.reject(new Error(payload.toString('utf8')));
+        }
+      }
+    }
+  }
+
+  /**
+   * Generate next message ID
+   * @returns {Buffer}
+   */
+  #nextMsgId() {
+    const id = this.nextId++;
+    const buf = Buffer.alloc(8);
+    buf.writeBigUInt64BE(id, 0);
+    return buf;
+  }
+
+  /**
+   * Build and send a request
+   * @param {number} msgType
+   * @param {string} key
+   * @param {Buffer} value
+   * @returns {Promise<Buffer>}
+   */
+  #sendRequest(msgType, key, value = Buffer.alloc(0)) {
+    return new Promise((resolve, reject) => {
+      if (!this.connected || !this.socket) {
+        reject(new Error('Not connected'));
+        return;
+      }
+
+      const msgId = this.#nextMsgId();
+      const keyBuf = Buffer.from(key, 'utf8');
+
+      const header = Buffer.alloc(17);
+      msgId.copy(header, 0);
+      header[8] = msgType;
+      header.writeUInt32BE(keyBuf.length, 9);
+      header.writeUInt32BE(value.length, 13);
+
+      const message = Buffer.concat([header, keyBuf, value, Buffer.from([END_MARKER])]);
+
+      const idKey = msgId.toString('hex');
+      this.pending.set(idKey, { resolve, reject });
+
+      this.socket.write(message);
+    });
+  }
+
+  /**
+   * Write a key-value pair to the cache
+   * @param {string} key
+   * @param {Buffer|string} value
+   * @returns {Promise<boolean>}
+   */
+  async write(key, value) {
+    const valueBuf = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+    await this.#sendRequest(MSG_WRITE, key, valueBuf);
+    return true;
+  }
+
+  /**
+   * Read a value from the cache
+   * @param {string} key
+   * @returns {Promise<Buffer>}
+   */
+  async read(key) {
+    return this.#sendRequest(MSG_READ, key);
+  }
+
+  /**
+   * Read and delete a value from the cache
+   * @param {string} key
+   * @returns {Promise<Buffer>}
+   */
+  async readAndDelete(key) {
+    return this.#sendRequest(MSG_READ_AND_DELETE, key);
+  }
+}
+
+module.exports = { NetCacheServer, NetCacheClient };

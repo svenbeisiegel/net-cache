@@ -1,7 +1,7 @@
 const net = require('net');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
-const { NetCacheServer } = require('./index.cjs');
+const { NetCacheServer, NetCacheClient } = require('./index.cjs');
 const {
   MSG_WRITE,
   MSG_READ,
@@ -177,5 +177,127 @@ describe('NetCacheServer', () => {
     assert.deepStrictEqual(parsed.msgId, msgId);
     assert.strictEqual(parsed.status, RES_ERROR);
     assert.ok(parsed.payload.toString('utf8').includes('Unknown message type'));
+  });
+});
+
+describe('NetCacheClient', () => {
+  let server;
+  let client;
+  const TEST_PORT = 11298;
+
+  before(async () => {
+    server = new NetCacheServer({ port: TEST_PORT, maxLifetimeMs: 5000 });
+    await server.start();
+
+    client = new NetCacheClient({ port: TEST_PORT });
+    await client.connect();
+  });
+
+  after(async () => {
+    client.disconnect();
+    await server.stop();
+  });
+
+  test('write returns true on success', async () => {
+    const result = await client.write('clientKey1', 'clientValue1');
+    assert.strictEqual(result, true);
+  });
+
+  test('write and read a value', async () => {
+    const key = 'clientKey2';
+    const value = 'clientValue2';
+
+    await client.write(key, value);
+    const result = await client.read(key);
+
+    assert.deepStrictEqual(result, Buffer.from(value));
+  });
+
+  test('write with Buffer value', async () => {
+    const key = 'clientKeyBuffer';
+    const value = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+
+    await client.write(key, value);
+    const result = await client.read(key);
+
+    assert.deepStrictEqual(result, value);
+  });
+
+  test('read non-existent key throws error', async () => {
+    await assert.rejects(
+      async () => {
+        await client.read('nonExistentClientKey');
+      },
+      {
+        name: 'Error',
+        message: 'Key not found',
+      }
+    );
+  });
+
+  test('readAndDelete returns value and removes it', async () => {
+    const key = 'clientDeleteMe';
+    const value = 'toBeDeleted';
+
+    await client.write(key, value);
+    const result = await client.readAndDelete(key);
+
+    assert.deepStrictEqual(result, Buffer.from(value));
+
+    // Verify deleted
+    await assert.rejects(
+      async () => {
+        await client.read(key);
+      },
+      {
+        name: 'Error',
+        message: 'Key not found',
+      }
+    );
+  });
+
+  test('overwrite existing key', async () => {
+    const key = 'clientOverwrite';
+    const value1 = 'first';
+    const value2 = 'second';
+
+    await client.write(key, value1);
+    await client.write(key, value2);
+
+    const result = await client.read(key);
+    assert.deepStrictEqual(result, Buffer.from(value2));
+  });
+
+  test('multiple concurrent requests', async () => {
+    const keys = ['concurrent1', 'concurrent2', 'concurrent3'];
+    const values = ['value1', 'value2', 'value3'];
+
+    // Write all concurrently
+    await Promise.all(keys.map((key, i) => client.write(key, values[i])));
+
+    // Read all concurrently
+    const results = await Promise.all(keys.map((key) => client.read(key)));
+
+    results.forEach((result, i) => {
+      assert.deepStrictEqual(result, Buffer.from(values[i]));
+    });
+  });
+
+  test('disconnect prevents further requests', async () => {
+    const tempClient = new NetCacheClient({ port: TEST_PORT });
+    await tempClient.connect();
+
+    await tempClient.write('tempKey', 'tempValue');
+    tempClient.disconnect();
+
+    await assert.rejects(
+      async () => {
+        await tempClient.read('tempKey');
+      },
+      {
+        name: 'Error',
+        message: 'Not connected',
+      }
+    );
   });
 });
