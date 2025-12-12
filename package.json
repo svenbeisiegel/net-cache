@@ -4,6 +4,7 @@
   "description": "",
   "type": "commonjs",
   "main": "index.cjs",
+  "types": "index.d.ts",
   "scripts": {
     "start": "node index.cjs",
     "lint": "eslint .",
