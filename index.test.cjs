@@ -8,6 +8,7 @@ const {
   MSG_READ_AND_DELETE,
   RES_OK,
   RES_ERROR,
+  RES_NOT_FOUND,
   END_MARKER,
 } = require('./common.cjs');
 
@@ -102,7 +103,7 @@ describe('NetCacheServer', () => {
     assert.deepStrictEqual(readParsed.payload, value);
   });
 
-  test('read non-existent key returns error', async () => {
+  test('read non-existent key returns not found', async () => {
     const msgId = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]);
     const key = 'nonExistent';
 
@@ -111,8 +112,8 @@ describe('NetCacheServer', () => {
     const parsed = parseResponse(res);
 
     assert.deepStrictEqual(parsed.msgId, msgId);
-    assert.strictEqual(parsed.status, RES_ERROR);
-    assert.strictEqual(parsed.payload.toString('utf8'), 'Key not found');
+    assert.strictEqual(parsed.status, RES_NOT_FOUND);
+    assert.strictEqual(parsed.payload.length, 0);
   });
 
   test('readAndDelete returns value and removes it', async () => {
@@ -140,8 +141,8 @@ describe('NetCacheServer', () => {
     const verifyRes = await sendRequest(client, verifyReq);
     const verifyParsed = parseResponse(verifyRes);
 
-    assert.strictEqual(verifyParsed.status, RES_ERROR);
-    assert.strictEqual(verifyParsed.payload.toString('utf8'), 'Key not found');
+    assert.strictEqual(verifyParsed.status, RES_NOT_FOUND);
+    assert.strictEqual(verifyParsed.payload.length, 0);
   });
 
   test('overwrite existing key', async () => {
@@ -223,16 +224,9 @@ describe('NetCacheClient', () => {
     assert.deepStrictEqual(result, value);
   });
 
-  test('read non-existent key throws error', async () => {
-    await assert.rejects(
-      async () => {
-        await client.read('nonExistentClientKey');
-      },
-      {
-        name: 'Error',
-        message: 'Key not found',
-      }
-    );
+  test('read non-existent key returns null', async () => {
+    const result = await client.read('nonExistentClientKey');
+    assert.strictEqual(result, null);
   });
 
   test('readAndDelete returns value and removes it', async () => {
@@ -244,16 +238,9 @@ describe('NetCacheClient', () => {
 
     assert.deepStrictEqual(result, Buffer.from(value));
 
-    // Verify deleted
-    await assert.rejects(
-      async () => {
-        await client.read(key);
-      },
-      {
-        name: 'Error',
-        message: 'Key not found',
-      }
-    );
+    // Verify deleted - should return null
+    const verifyResult = await client.read(key);
+    assert.strictEqual(verifyResult, null);
   });
 
   test('overwrite existing key', async () => {

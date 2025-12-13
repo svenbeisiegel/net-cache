@@ -5,6 +5,7 @@ const {
   MSG_READ_AND_DELETE,
   RES_OK,
   RES_ERROR,
+  RES_NOT_FOUND,
   END_MARKER,
 } = require('./common.cjs');
 
@@ -138,7 +139,7 @@ class NetCacheServer {
         if (entry) {
           this.#sendOkWithPayload(socket, msgId, entry.value);
         } else {
-          this.#sendError(socket, msgId, 'Key not found');
+          this.#sendNotFound(socket, msgId);
         }
         break;
       }
@@ -150,7 +151,7 @@ class NetCacheServer {
           this.cache.delete(key);
           this.#sendOkWithPayload(socket, msgId, entry.value);
         } else {
-          this.#sendError(socket, msgId, 'Key not found');
+          this.#sendNotFound(socket, msgId);
         }
         break;
       }
@@ -190,6 +191,19 @@ class NetCacheServer {
     const response = Buffer.alloc(13);
     msgId.copy(response, 0);
     response[8] = RES_OK;
+    response.writeUInt32BE(0, 9);
+    socket.write(response);
+  }
+
+  /**
+   * Send not found response (no payload)
+   * @param {net.Socket} socket
+   * @param {Buffer} msgId
+   */
+  #sendNotFound(socket, msgId) {
+    const response = Buffer.alloc(13);
+    msgId.copy(response, 0);
+    response[8] = RES_NOT_FOUND;
     response.writeUInt32BE(0, 9);
     socket.write(response);
   }
@@ -353,6 +367,8 @@ class NetCacheClient {
         this.pending.delete(idKey);
         if (status === RES_OK) {
           pending.resolve(payload);
+        } else if (status === RES_NOT_FOUND) {
+          pending.resolve(null);
         } else {
           pending.reject(new Error(payload.toString('utf8')));
         }

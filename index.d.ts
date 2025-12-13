@@ -55,13 +55,15 @@ export class NetCacheClient {
 
   /**
    * Read a value from the cache
-   * @throws Error if key not found
+   * @returns Buffer if found, null if key not found
+   * @throws Error on other failures
    */
-  read(key: string): Promise<Buffer>;
+  read(key: string): Promise<Buffer | null>;
 
   /**
    * Read and delete a value from the cache
-   * @throws Error if key not found
+   * @returns Buffer if found, null if key not found
+   * @throws Error on other failures
    */
-  readAndDelete(key: string): Promise<Buffer>;
+  readAndDelete(key: string): Promise<Buffer | null>;
 }

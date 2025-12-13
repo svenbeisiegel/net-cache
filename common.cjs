@@ -6,6 +6,7 @@ const MSG_READ_AND_DELETE = 0x02;
 // Response codes
 const RES_OK = 0xa0;
 const RES_ERROR = 0xa1;
+const RES_NOT_FOUND = 0xa2;
 
 // End-of-message marker
 const END_MARKER = 0xff;
@@ -16,5 +17,6 @@ module.exports = {
   MSG_READ_AND_DELETE,
   RES_OK,
   RES_ERROR,
+  RES_NOT_FOUND,
   END_MARKER,
 };
